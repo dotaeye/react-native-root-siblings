@@ -1,81 +1,44 @@
-import { StyleSheet, View, AppRegistry } from "react-native";
-import React, { Component } from "react";
-import StaticContainer from "static-container";
-import EventEmitter from "react-native/Libraries/vendor/emitter/EventEmitter.js";
+import React, { cloneElement } from "react";
+import { StyleSheet } from "react-native";
+import emitter from "./AppRegistryInjection";
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        position: "relative"
+    offStream: {
+        position: "absolute"
     }
 });
+let uid = 0;
 
-let emitter = AppRegistry.rootSiblingsEmitter;
-
-if (!(emitter instanceof EventEmitter)) {
-    emitter = new EventEmitter();
-    // inject modals into app entry component
-    const originRegister = AppRegistry.registerComponent;
-
-    AppRegistry.registerComponent = function(appKey, getAppComponent) {
-        const siblings = new Map();
-        const updates = new Set();
-
-        return originRegister(appKey, function() {
-            const OriginAppComponent = getAppComponent();
-
-            return class extends Component {
-                static displayName = `Root(${appKey})`;
-
-                componentWillMount() {
-                    this._update = this._update.bind(this);
-                    emitter.addListener("siblings.update", this._update);
-                }
-
-                componentWillUnmount() {
-                    emitter.removeListener("siblings.update", this._update);
-                    siblings.clear();
-                    updates.clear();
-                }
-
-                _update(id, element, callback) {
-                    if (siblings.has(id) && !element) {
-                        siblings.delete(id);
-                    } else {
-                        siblings.set(id, element);
-                    }
-                    updates.add(id);
-                    this.forceUpdate(callback);
-                }
-
-                render() {
-                    const elements = [];
-                    siblings.forEach((element, id) => {
-                        elements.push(
-                            <StaticContainer
-                                key={`root-sibling-${id}`}
-                                shouldUpdate={updates.has(id)}
-                            >
-                                {element}
-                            </StaticContainer>
-                        );
-                    });
-                    updates.clear();
-
-                    return (
-                        <View style={styles.container}>
-                            <StaticContainer shouldUpdate={false}>
-                                <OriginAppComponent {...this.props} />
-                            </StaticContainer>
-                            {elements}
-                        </View>
-                    );
-                }
-            };
+export default class {
+    constructor(element, callback) {
+        Object.defineProperty(this, "_id", {
+            enumerable: false,
+            configurable: false,
+            writable: false,
+            value: uid++
         });
-    };
 
-    AppRegistry.rootSiblingsEmitter = emitter;
+        this.update(element, callback);
+    }
+
+    _offStreamElement(element) {
+        return cloneElement(element, {
+            style: [element.props.style, styles.offStream]
+        });
+    }
+
+    _id = null;
+
+    update(element, callback) {
+        emitter.emit(
+            "siblings.update",
+            this._id,
+            this._offStreamElement(element),
+            callback
+        );
+    }
+
+    destroy(callback) {
+        emitter.emit("siblings.update", this._id, null, callback);
+    }
 }
-
-export default emitter;
