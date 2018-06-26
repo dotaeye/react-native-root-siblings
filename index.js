@@ -1,109 +1,81 @@
-import React, { Component, cloneElement } from 'react';
-import { StyleSheet, View, AppRegistry } from 'react-native';
-import StaticContainer from 'static-container';
-import { Provider } from 'react-redux';
+import { StyleSheet, View, AppRegistry } from "react-native";
+import React, { Component } from "react";
+import StaticContainer from "static-container";
+import EventEmitter from "react-native/Libraries/vendor/emitter/EventEmitter.js";
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1
-  }
+    container: {
+        flex: 1,
+        position: "relative"
+    }
 });
 
-let uuid = 0;
-const triggers = [];
+let emitter = AppRegistry.rootSiblingsEmitter;
 
-AppRegistry.setWrapperComponentProvider(function () {
-  return class extends Component {
-    static displayName = 'RootSiblingsWrapper';
+if (!(emitter instanceof EventEmitter)) {
+    emitter = new EventEmitter();
+    // inject modals into app entry component
+    const originRegister = AppRegistry.registerComponent;
 
-    constructor(props) {
-      super(props);
-      this._siblings = {};
-    }
+    AppRegistry.registerComponent = function(appKey, getAppComponent) {
+        const siblings = new Map();
+        const updates = new Set();
 
-    componentWillMount() {
-      triggers.push(this._update);
-    }
+        return originRegister(appKey, function() {
+            const OriginAppComponent = getAppComponent();
 
-    componentWillUnmount() {
-      triggers.splice(triggers.indexOf(this._update), 1);
-    }
+            return class extends Component {
+                static displayName = `Root(${appKey})`;
 
-    _updatedSiblings = {};
-    _siblings = {};
-    _stores = {};
+                componentWillMount() {
+                    this._update = this._update.bind(this);
+                    emitter.addListener("siblings.update", this._update);
+                }
 
-    _update = (id, element, callback, store) => {
-      const siblings = { ...this._siblings };
-      const stores = { ...this._stores };
-      if (siblings[id] && !element) {
-        delete siblings[id];
-        delete stores[id];
-      } else if (element) {
-        siblings[id] = element;
-        stores[id] = store;
-      }
+                componentWillUnmount() {
+                    emitter.removeListener("siblings.update", this._update);
+                    siblings.clear();
+                    updates.clear();
+                }
 
-      this._updatedSiblings[id] = true;
-      this._siblings = siblings;
-      this._stores = stores;
-      this.forceUpdate(callback);
+                _update(id, element, callback) {
+                    if (siblings.has(id) && !element) {
+                        siblings.delete(id);
+                    } else {
+                        siblings.set(id, element);
+                    }
+                    updates.add(id);
+                    this.forceUpdate(callback);
+                }
+
+                render() {
+                    const elements = [];
+                    siblings.forEach((element, id) => {
+                        elements.push(
+                            <StaticContainer
+                                key={`root-sibling-${id}`}
+                                shouldUpdate={updates.has(id)}
+                            >
+                                {element}
+                            </StaticContainer>
+                        );
+                    });
+                    updates.clear();
+
+                    return (
+                        <View style={styles.container}>
+                            <StaticContainer shouldUpdate={false}>
+                                <OriginAppComponent {...this.props} />
+                            </StaticContainer>
+                            {elements}
+                        </View>
+                    );
+                }
+            };
+        });
     };
 
-    render() {
-      const siblings = this._siblings;
-      const stores = this._stores;
-      const elements = [];
-      Object.keys(siblings).forEach((key) => {
-        const element = siblings[key];
-        if (element) {
-          const sibling = (
-            <StaticContainer
-              key={`root-sibling-${key}`}
-              shouldUpdate={!!this._updatedSiblings[key]}
-            >
-              {element}
-            </StaticContainer>
-          );
-
-          const store = stores[key];
-          elements.push(store ? (
-            <Provider store={store} key={`root-sibling-${key}-provider`}>
-              {sibling}
-            </Provider>
-          ) : sibling);
-        }
-      });
-      this._updatedSiblings = {};
-      return (
-        <View style={styles.container}>
-          <StaticContainer shouldUpdate={false}>
-            {this.props.children}
-          </StaticContainer>
-          {elements}
-        </View>
-      );
-    }
-  }
-})
-
-export default class {
-  constructor(element, callback, store) {
-    const id = uuid++;
-    function update(element, callback, store) {
-      triggers.forEach(function (trigger) {
-        trigger(id, element, callback, store);
-      });
-    };
-
-    function destroy (callback) {
-      triggers.forEach(function (trigger) {
-        trigger(id, null, callback);
-      });
-    };
-
-    update(element, callback, store);
-    this.update = update;
-    this.destroy = destroy;
-  }
+    AppRegistry.rootSiblingsEmitter = emitter;
 }
+
+export default emitter;
